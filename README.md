@@ -1,4 +1,4 @@
-# VGG-transfer
+# VGG-transfer tensorflow
 
 VGG model transfer learning begin from model pre-trained by imagenet dataset
 
