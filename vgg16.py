@@ -124,8 +124,8 @@ class VGG16:
 # the loss defined by myself
         with tf.variable_scope("loss"):
             self.loss = tf.losses.softmax_cross_entropy(self.labels,self.fc8, reduction=tf.losses.Reduction.MEAN)
-            self.pred = tf.argmax(self.fc8,axis=0)
-            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pred,tf.argmax(self.labels,axis=0)),tf.float32))
+            self.pred = tf.argmax(self.fc8,axis=1)
+            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pred,tf.argmax(self.labels,axis=1)),tf.float32))
 
     def _create_optimizer(self):
         with tf.variable_scope("optimizer"):
