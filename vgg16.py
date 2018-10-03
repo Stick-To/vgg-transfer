@@ -11,32 +11,36 @@ import os
 VGG_MEAN = np.array([103.939, 116.779, 123.68]).reshape((1,1,1,3))
 
 class VGG16:
-    def __init__(self,data_provider,init_learning_rate,epoch,checkpoint,dataset,reduce_epoch_time1=0.3,reduce_epoch_time2=0.6):
+    def __init__(self,dataprovider_train,dataprovider_val,init_learning_rate,epoch,checkpoint,reduce_epoch_time1=0.3,reduce_epoch_time2=0.6):
         """
              checkpoint:ckpt file to be read
              dataset:the folder name to be create in checkpoints/ that save checkpoints for The parameters of this time
              reduce_epoch_time1:divide learning_rate by 10
              reduce_epoch_time2:divide learning_rate by 10
         """
-        self.data_provider = data_provider
-        self.data_shape = data_provider.data_shape
-        self.num_classes = data_provider.n_classes
-        self.train_initop = data_provider.train_init_op
-        self.val_initop = data_provider.val_init_op
-        self.train_iterator = data_provider.train_iterator
-        self.val_iterator = data_provider.val_iterator
-        self.num_train = data_provider.num_train
-        self.num_val = data_provider.num_val
-        self.batch_size = data_provider.batch_size
-        self.train_labels,_ ,self.train_images = self.train_iterator.get_next()
-        self.train_images =tf.cast(self.train_images,tf.float32) - VGG_MEAN
-        self.val_labels,_,self.val_images = self.val_iterator.get_next()
-        self.val_images =tf.cast(self.val_images,tf.float32) - VGG_MEAN
+        self.dataprovider_train = dataprovider_train
+        self.data_shape = dataprovider_train.data_shape
+        self.num_classes = dataprovider_train.num_classes
+        self.train_initop = dataprovider_train.initop
+        self.train_iterator = dataprovider_train.iterator
+        self.num_train = dataprovider_train.num_samples
+        self.train_batch_size = dataprovider_train.batch_size
+        self.train_labels, _, self.train_images = self.train_iterator.get_next()
+        self.train_images = tf.cast(self.train_images, tf.float32) - VGG_MEAN
+
+        self.is_test = True if dataprovider_val is not None else False
+        if self.is_test:
+            self.dataprovider_val = dataprovider_val
+            self.val_initop = dataprovider_val.initop
+            self.val_iterator = dataprovider_val.iterator
+            self.num_val = dataprovider_val.num_samples
+            self.val_batch_size = dataprovider_val.batch_size
+            self.val_labels, _, self.val_images = self.val_iterator.get_next()
+            self.val_images = tf.cast(self.val_images, tf.float32) - VGG_MEAN
 
         self.learning_late = init_learning_rate
-        self.reader = pytf.NewCheckpointReader(checkpoint)
+        self.checkpoint = checkpoint
 
-        self.dataset = dataset
         self.global_step = tf.get_variable('global_step', initializer=tf.constant(0), trainable=False)
 
         self.epoch = int(epoch)
@@ -45,7 +49,7 @@ class VGG16:
         self._build_input()
         self._build_graph()
         self._create_optimizer()
-        self._create_summary()
+        #self._create_summary()
         self._create_checkpoints()
         self._init_session()
     def conv_layer(self,bottom,filter,bias,name):
@@ -58,70 +62,127 @@ class VGG16:
         return tf.layers.dense(bottom, units,activation=activation,
                     name=name)
     def _build_input(self):
-        self.images = tf.placeholder(tf.float32, [None, self.data_shape[0], self.data_shape[1] , self.data_shape[2]])
-        self.labels = tf.placeholder(tf.int32, [None,self.num_classes])
+        shape = [None];
+        shape.extend(self.data_shape)
+        self.images = tf.placeholder(tf.float32, shape, name='images')
+        self.labels = tf.placeholder(tf.int32, [None,self.num_classes], name='labels')
         #self.is_training = tf.placeholder(tf.bool, [])
 
     #read parameters from ckpt
     def _build_graph(self):
-	    # the layers defined by vgg_16.ckpt
+        reader = pytf.NewCheckpointReader(self.checkpoint)
         with tf.variable_scope("conv"):
 
-            self.conv1_1=self.conv_layer(self.images,self.reader.get_tensor("vgg_16/conv1/conv1_1/weights"),
-                        self.reader.get_tensor("vgg_16/conv1/conv1_1/biases"),
-                        name = "conv1_1")
-            self.conv1_2=self.conv_layer(self.conv1_1,self.reader.get_tensor("vgg_16/conv1/conv1_2/weights"),
-                        self.reader.get_tensor("vgg_16/conv1/conv1_2/biases"),
-                        name = "conv1_2")
+            self.conv1_1=self.conv_layer(self.images,
+                                         reader.get_tensor("vgg_16/conv1/conv1_1/weights"),
+                                         reader.get_tensor("vgg_16/conv1/conv1_1/biases"),
+                                         name = "conv1_1")
+            self.conv1_2=self.conv_layer(self.conv1_1,
+                                         reader.get_tensor("vgg_16/conv1/conv1_2/weights"),
+                                         reader.get_tensor("vgg_16/conv1/conv1_2/biases"),
+                                         name = "conv1_2")
             self.pool1=self.max_pool(self.conv1_2,name="pool1")
 
-            self.conv2_1=self.conv_layer(self.pool1,self.reader.get_tensor("vgg_16/conv2/conv2_1/weights"),
-                        self.reader.get_tensor("vgg_16/conv2/conv2_1/biases"),
-                        name = "conv2_1")
-            self.conv2_2=self.conv_layer(self.conv2_1,self.reader.get_tensor("vgg_16/conv2/conv2_2/weights"),
-                        self.reader.get_tensor("vgg_16/conv2/conv2_2/biases"),
-                        name="conv2_2")
+            self.conv2_1=self.conv_layer(self.pool1,
+                                         tf.get_variable(name='kenrel_conv2_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv2/conv2_1/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv2_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv2/conv2_1/biases"),
+                                                         trainable=True),
+                                         name = "conv2_1")
+            self.conv2_2=self.conv_layer(self.conv2_1,
+                                         tf.get_variable(name='kernel_conv2_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv2/conv2_2/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv2_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv2/conv2_2/biases"),
+                                                         trainable=True),
+                                         name="conv2_2")
             self.pool2=self.max_pool(self.conv2_2,name="pool2")
 
-            self.conv3_1=self.conv_layer(self.pool2,self.reader.get_tensor("vgg_16/conv3/conv3_1/weights"),
-                        self.reader.get_tensor("vgg_16/conv3/conv3_1/biases"),
-                        name = "conv3_1")
-            self.conv3_2=self.conv_layer(self.conv3_1,self.reader.get_tensor("vgg_16/conv3/conv3_2/weights"),
-                        self.reader.get_tensor("vgg_16/conv3/conv3_2/biases"),
-                        name = "conv3_2")
-            self.conv3_3=self.conv_layer(self.conv3_2,self.reader.get_tensor("vgg_16/conv3/conv3_3/weights"),
-                        self.reader.get_tensor("vgg_16/conv3/conv3_3/biases"),
-                        name = "conv3_3")
+            self.conv3_1=self.conv_layer(self.pool2,
+                                         tf.get_variable(name='kernel_conv3_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv3/conv3_1/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv_3_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv3/conv3_1/biases"),
+                                                         trainable=True),
+                                         name = "conv3_1")
+            self.conv3_2=self.conv_layer(self.conv3_1,
+                                         tf.get_variable(name='kernel_conv3_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv3/conv3_2/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv3_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv3/conv3_2/biases"),
+                                                         trainable=True),
+                                         name = "conv3_2")
+            self.conv3_3=self.conv_layer(self.conv3_2,
+                                         tf.get_variable(name='kernel_conv3_3',
+                                                         initializer=reader.get_tensor("vgg_16/conv3/conv3_3/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv3_3',
+                                                         initializer=reader.get_tensor("vgg_16/conv3/conv3_3/biases"),
+                                                         trainable=True),
+                                         name = "conv3_3")
             self.pool3=self.max_pool(self.conv3_3,name="pool3")
 
-            self.conv4_1=self.conv_layer(self.pool3,self.reader.get_tensor("vgg_16/conv4/conv4_1/weights"),
-                        self.reader.get_tensor("vgg_16/conv4/conv4_1/biases"),
-                        name = "conv4_1")
-            self.conv4_2=self.conv_layer(self.conv4_1,self.reader.get_tensor("vgg_16/conv4/conv4_2/weights"),
-                        self.reader.get_tensor("vgg_16/conv4/conv4_2/biases"),
-                        name = "conv4_2")
-            self.conv4_3=self.conv_layer(self.conv4_2,self.reader.get_tensor("vgg_16/conv4/conv4_3/weights"),
-                        self.reader.get_tensor("vgg_16/conv4/conv4_3/biases"),
-                        name = "conv4_3")
+            self.conv4_1=self.conv_layer(self.pool3,
+                                         tf.get_variable(name='kernel_conv4_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv4/conv4_1/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv4_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv4/conv4_1/biases"),
+                                                         trainable=True),
+                                         name = "conv4_1")
+            self.conv4_2=self.conv_layer(self.conv4_1,
+                                         tf.get_variable(name='kernel_conv4_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv4/conv4_2/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv4_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv4/conv4_2/biases"),
+                                                         trainable=True),
+                                         name = "conv4_2")
+            self.conv4_3=self.conv_layer(self.conv4_2,
+                                         tf.get_variable(name='kernel_conv4_3',
+                                                         initializer=reader.get_tensor("vgg_16/conv4/conv4_3/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv4_3',
+                                                         initializer=reader.get_tensor("vgg_16/conv4/conv4_3/biases"),
+                                                         trainable=True),
+                                         name = "conv4_3")
             self.pool4=self.max_pool(self.conv4_3,name="pool4")
 
-            self.conv5_1=self.conv_layer(self.pool4,self.reader.get_tensor("vgg_16/conv5/conv5_1/weights"),
-                        self.reader.get_tensor("vgg_16/conv5/conv5_1/biases"),
-                        name = "conv5_1")
-            self.conv5_2=self.conv_layer(self.conv5_1,self.reader.get_tensor("vgg_16/conv5/conv5_2/weights"),
-                        self.reader.get_tensor("vgg_16/conv5/conv5_2/biases"),
-                        name = "conv5_2")
-            self.conv5_3=self.conv_layer(self.conv5_2,self.reader.get_tensor("vgg_16/conv5/conv5_3/weights"),
-                        self.reader.get_tensor("vgg_16/conv5/conv5_3/biases"),
-                        name = "conv5_3")
+            self.conv5_1=self.conv_layer(self.pool4,
+                                         tf.get_variable(name='kernel_conv5_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv5/conv5_1/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv5_1',
+                                                         initializer=reader.get_tensor("vgg_16/conv5/conv5_1/biases"),
+                                                         trainable=True),
+                                         name = "conv5_1")
+            self.conv5_2=self.conv_layer(self.conv5_1,
+                                         tf.get_variable(name='kernel_conv5_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv5/conv5_2/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv5_2',
+                                                         initializer=reader.get_tensor("vgg_16/conv5/conv5_2/biases"),
+                                                         trainable=True),
+                                         name = "conv5_2")
+            self.conv5_3=self.conv_layer(self.conv5_2,
+                                         tf.get_variable(name='kernel_conv5_3',
+                                                         initializer=reader.get_tensor("vgg_16/conv5/conv5_3/weights"),
+                                                         trainable=True),
+                                         tf.get_variable(name='bias_conv5_3',
+                                                         initializer=reader.get_tensor("vgg_16/conv5/conv5_3/biases"),
+                                                         trainable=True),
+                                         name = "conv5_3")
             self.pool5=self.max_pool(self.conv5_3,name="pool5")
-# the layers defined by myself
         with tf.variable_scope("fc"):
             self.flatten = tf.layers.flatten(self.pool5, name="flatten")
             self.fc6 = self.fc_layer(self.flatten,"fc6",4096, activation=tf.nn.relu)
             self.fc7 = self.fc_layer(self.flatten,"fc7",4096, activation=tf.nn.relu)
             self.fc8 = self.fc_layer(self.flatten,"fc8",self.num_classes)
-# the loss defined by myself
         with tf.variable_scope("loss"):
             self.loss = tf.losses.softmax_cross_entropy(self.labels,self.fc8, reduction=tf.losses.Reduction.MEAN)
             self.pred = tf.argmax(self.fc8,axis=1)
@@ -134,39 +195,28 @@ class VGG16:
 
     def _create_summary(self):
         try:
-            os.makedirs("graphs\\"+self.dataset+"\\lr"+str(self.learning_late)+"\\")
+            os.makedirs(os.path.join('.','graph',str(self.learning_late)))
         except:
             pass
         with tf.name_scope('summaries'):
             tf.summary.scalar('loss', self.loss)
-            tf.summary.histogram('histogram loss', self.loss)
             tf.summary.scalar('accuracy', self.accuracy)
-            tf.summary.histogram('histogram accuracy', self.accuracy)
             self.summary_op = tf.summary.merge_all()
 
 
     def _create_checkpoints(self):
+        save_path = os.path.join('.', 'checkpoints')
         try:
-            os.makedirs("checkpoints\\"+self.dataset+"\\train\\")
+            os.makedirs(save_path)
         except:
             pass
-        try:
-            os.makedirs("checkpoints\\"+self.dataset+"\\val\\")
-        except:
-            pass
-        self.save_train_path = "checkpoints\\"+self.dataset+"\\train\\train"
-        self.save_val_path = "checkpoints\\"+self.dataset+"\\val\\val"
+        self.save_path  = os.path.join(save_path, 'check')
     def _init_session(self):
         self.sess=tf.InteractiveSession()
         self.sess.run(tf.global_variables_initializer())
-        self.writer = tf.summary.FileWriter("graphs\\"+self.dataset+"\\lr"+str(self.learning_late)+"\\", self.sess.graph)
-        self.train_saver = tf.train.Saver()
-        self.val_saver = tf.train.Saver()
-    def load_model(self, mode="val"):
-        if(mode == "val"):
-            path = self.save_val_path
-        else:
-            path = self.save_train_path
+        self.saver = tf.train.Saver()
+    def load_model(self):
+        path = self.save_path
         ckpt = tf.train.get_checkpoint_state(os.path.dirname(path))
         if ckpt and ckpt.model_checkpoint_path:
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)
@@ -175,34 +225,31 @@ class VGG16:
             print("train the model from the scratch")
 
 
-    def save_model(self,mode="val"):
-        if(mode=="val"):
-            self.saver.save(self.sess,self.save_val_path,global_step=self.global_step)
-        else:
-            self.saver.save(self.sess,self.save_train_path,global_step=self.global_step)
+    def save_model(self):
+            self.saver.save(self.sess,self.save_path,global_step=self.global_step)
 
     def train_one_epoch(self):
         total_loss = []
         total_accuracy = []
         self.sess.run(self.train_initop)
-        total_iter = self.num_train//self.batch_size
+        total_iter = self.num_train//self.train_batch_size
         for i in range(total_iter):
             images,labels = self.sess.run([self.train_images,self.train_labels])
-            loss, acc, _, summary = self.sess.run([self.loss,self.accuracy, self.optimizer,self.summary_op],feed_dict={
+            loss, acc, _ = self.sess.run([self.loss,self.accuracy, self.optimizer],feed_dict={
                 self.images:images,
                 self.labels:labels
             })
-            self.writer.add_summary(summary, global_step=self.global_step.eval(session=self.sess))
             total_loss.append(loss)
             total_accuracy.append(acc)
         mean_loss = np.mean(total_loss)
         mean_accuracy = np.mean(total_accuracy)
         return mean_loss, mean_accuracy
-    def test(self):
+    def validate(self):
+
         total_loss = []
         total_accuracy = []
         self.sess.run(self.val_initop)
-        total_iter = self.num_val//self.batch_size
+        total_iter = self.num_val//self.val_batch_size
         for i in range(total_iter):
             images,labels = self.sess.run([self.val_images,self.val_labels])
             loss, acc= self.sess.run([self.loss,self.accuracy],feed_dict={
@@ -215,6 +262,12 @@ class VGG16:
         mean_accuracy = np.mean(total_accuracy)
         return mean_loss, mean_accuracy
 
+    def test(self, image):
+        img = image - VGG_MEAN
+        pred= self.sess.run([self.pred],feed_dict={
+            self.images:img,
+            })
+        return pred
     def train_all_epochs(self):
 
         self.load_model()
@@ -226,17 +279,15 @@ class VGG16:
                 self.learning_late /= 10
                 print("devide the learning rate by 10 at epoch %d" %epo)
             loss, acc = self.train_one_epoch()
-            self.save_model("train")
             print("train epoch %d" %epo,"mean loss %f" %loss,"mean accuracy %f" %acc)
-            loss, acc = self.test(epo)
-            self.save_model("val")
+            loss, acc = self.validate()
+            self.save_model()
             print("val epoch %d" %epo,"mean loss %f" %loss,"mean accuracy %f" %acc)
             time_per_epoch = time.time() - start_time
             time_total_used = time.time() - total_start_time
 
             print("epoch %d"%epo,"used time %s "%str(timedelta(seconds=time_per_epoch)))
             print("total %d epoch now "%epo,"used time %s "%str(timedelta(seconds=time_total_used)))
-        self.writer.close()
 
 
 

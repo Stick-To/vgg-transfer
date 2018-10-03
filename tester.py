@@ -21,15 +21,16 @@ val_set = [".\\tfrecord\\val.tfrecord"]
 from dataprovider import dataprovider
 
 # create dateprovide for model
-dataset = dataprovider(train_set,val_set,3,1657,463,[90,160,3],1657,463,32)
+dataset_train = dataprovider(train_set,61,1037,[224,224,3],32739,40)
+dataset_val = dataprovider(val_set,61,100,[224,224,3],4982,40)
 
 
 
 import vgg16
 import vgg19
 
-#tester = Tester(vgg16.VGG16(dataset,0.01,400,".\\checkpoints\\vgg_16.ckpt","cow"))
-tester = Tester(vgg19.VGG19(dataset,0.01,400,".\\checkpoints\\vgg_19.ckpt",))
+tester = Tester(vgg16.VGG16(dataset_train,dataset_val,0.01,400,os.path.join('.','checkpoints','vgg_16.ckpt')))
+#tester = Tester(vgg19.VGG19(dataset,0.01,400,".\\checkpoints\\vgg_19.ckpt",))
 
 tester.model.train_all_epochs()
 

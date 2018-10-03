@@ -211,13 +211,14 @@ class VGG19:
         self.sess.run(self.val_initop)
         for i in range(self.num_val//self.batch_size):
             images, labels = self.sess.run([self.val_images, self.val_labels])
-            loss, acc = self.sess.run([self.loss,self.accuracy],
+            loss, acc,pred = self.sess.run([self.loss,self.accuracy,self.pred],
                                 feed_dict={
                                     self.images:images,
                                     self.labels:labels
                                 })
             total_loss.append(loss)
             total_acc.append(acc)
+        print(pred)
         mean_loss = np.mean(total_loss)
         mean_acc = np.mean(total_acc)
         return mean_loss, mean_acc
@@ -239,6 +240,9 @@ class VGG19:
             if(acc >= self.val_acc):
                 self.val_acc = acc
                 self.save_model('val')
+                f = open("vallog.txt",'a')
+                f.write("epoch: "+str(i)+" loss:"+str(loss)+" acc: "+str(acc)+"\n")
+                f.close()
             print('val epoch %d'%i,'mean loss:',loss,' mean accuracy:',acc)
             total_per_epoch = time.time() - start_time
             total_used_time = time.time() - total_start_time
