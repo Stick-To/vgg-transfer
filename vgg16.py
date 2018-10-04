@@ -62,7 +62,7 @@ class VGG16:
         return tf.layers.dense(bottom, units,activation=activation,
                     name=name)
     def _build_input(self):
-        shape = [None];
+        shape = [None]
         shape.extend(self.data_shape)
         self.images = tf.placeholder(tf.float32, shape, name='images')
         self.labels = tf.placeholder(tf.int32, [None,self.num_classes], name='labels')
